@@ -108,40 +108,21 @@ class TestCancelActiveFlash:
         assert flash_overlay._active_overlay is None
 
 
-class TestBuildStripDefs:
-    def test_region_strips_spread_outward_from_rect(self):
-        defs = flash_overlay._build_strip_defs([(100, 200, 500, 400)], full_screen=False)
-        # Layer 0 (innermost glow ring) sits exactly on the rect edge with full alpha.
-        layer0 = [d for d in defs if d[4] == 1.0]
-        assert len(layer0) == 4
-        top, bottom, left, right = layer0
-        assert top == (100, 200, 500, 201, 1.0)
-        assert bottom == (100, 399, 500, 400, 1.0)
-        assert left == (100, 200, 101, 400, 1.0)
-        assert right == (499, 200, 500, 400, 1.0)
+class TestLayerColor:
+    def test_full_intensity_returns_orange_red(self):
+        assert flash_overlay._layer_color(1.0).upper() == "#FF4500"
 
-    def test_region_outer_layer_has_lower_alpha_and_grows_outward(self):
-        defs = flash_overlay._build_strip_defs([(100, 200, 500, 400)], full_screen=False)
-        last_layer_alpha = (1.0 - (flash_overlay._GLOW_LAYERS - 1) / flash_overlay._GLOW_LAYERS) ** 2
-        outer = [d for d in defs if abs(d[4] - last_layer_alpha) < 1e-9]
-        assert len(outer) == 4
-        # Outermost top strip sits ABOVE the rect edge (smaller y) by N-1 pixels.
-        top = next(d for d in outer if d[3] - d[1] == 1 and d[2] - d[0] > 1)
-        assert top[1] == 200 - (flash_overlay._GLOW_LAYERS - 1)
+    def test_half_intensity_blends_toward_black(self):
+        c = flash_overlay._layer_color(0.5)
+        # 0xFF * 0.5 = 127 -> 7F; 0x45 * 0.5 = 34 -> 22; 0x00 * 0.5 = 0 -> 00.
+        assert c.upper() == "#7F2200"
 
-    def test_full_screen_strips_spread_inward(self):
-        defs = flash_overlay._build_strip_defs([(0, 0, 1000, 800)], full_screen=True)
-        layer0 = [d for d in defs if d[4] == 1.0]
-        # Inner-most ring is offset by _FULLSCREEN_INSET from the screen edge.
-        inset = flash_overlay._FULLSCREEN_INSET
-        top = next(d for d in layer0 if d[3] - d[1] == 1)
-        assert top[1] == inset
-        assert top[3] == inset + 1
-
-    def test_full_screen_too_small_rect_produces_no_strips(self):
-        # Full-screen mode strips inset inward; a 1x1 rect can't fit any layer.
-        defs = flash_overlay._build_strip_defs([(0, 0, 1, 1)], full_screen=True)
-        assert defs == []
+    def test_zero_intensity_avoids_pure_black(self):
+        # Pure black is the transparent-colour key; the helper must not return it
+        # because a 0-intensity layer would otherwise punch a hole in the canvas.
+        c = flash_overlay._layer_color(0.0)
+        assert c.upper() != "#000000"
+        assert c.upper() == "#010000"
 
 
 class TestRunOverlayFallthrough:
