@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from windows_mcp.uia import Control, ComboBoxControl, CheckBoxControl, EditControl, ButtonControl, SliderControl, ScrollPattern, WindowControl, Rect, ExpandCollapseState, ToggleState, PatternId, PropertyId, AccessibleRoleNames, TreeScope, ControlFromHandle, UIADeadElementError, from_com_error
 from _ctypes import COMError
 from windows_mcp.tree.config import INTERACTIVE_CONTROL_TYPE_NAMES, DOCUMENT_CONTROL_TYPE_NAMES, INFORMATIVE_CONTROL_TYPE_NAMES, DEFAULT_ACTIONS, INTERACTIVE_ROLES, THREAD_MAX_RETRIES, STRUCTURAL_CONTROL_TYPE_NAMES
@@ -849,7 +851,7 @@ class Tree:
             logger.error(f"Error getting nodes for handle {handle}: {e}")
             raise
 
-    def on_focus_change(self, sender:ctypes.POINTER('IUIAutomationElement')):
+    def on_focus_change(self, sender: Any):
         """Handle focus change events."""
         # Debounce duplicate events
         current_time = perf_counter()
