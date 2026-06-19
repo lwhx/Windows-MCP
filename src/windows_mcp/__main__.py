@@ -34,6 +34,28 @@ import sys
 
 logger = logging.getLogger(__name__)
 
+
+def _echo_section(title: str) -> None:
+    """Print a section heading via click.echo, falling back to ASCII
+    when the current stdout encoding can't represent the U+2500
+    box-drawing character.
+
+    Without this guard, `windows-mcp auth` crashes on the default
+    PowerShell / cmd console (cp1252) with a UnicodeEncodeError when
+    click.echo hits ─. The config file is already written at this
+    point, but the noisy traceback obscures the success and breaks
+    scripted callers that treat exit-nonzero as a real failure.
+    Setting PYTHONIOENCODING=utf-8 is a workaround; this is the fix.
+    """
+    enc = getattr(sys.stdout, "encoding", None) or "ascii"
+    try:
+        "─".encode(enc)
+        bar = "─" * 3
+    except (UnicodeEncodeError, LookupError):
+        bar = "==="
+    click.echo(f"\n{bar} {title} {bar}")
+
+
 desktop: Any | None = None
 watchdog: Any | None = None
 analytics: Any | None = None
@@ -877,7 +899,7 @@ def auth(transport: str, host: str, port: int, with_tls: bool, force: bool) -> N
     click.echo(f"\nSaved to {config_path}")
 
     if transport == "stdio":
-        click.echo("\n─── Claude Desktop config (stdio) ───")
+        _echo_section("Claude Desktop config (stdio)")
         click.echo(
             """\
 {
@@ -895,11 +917,11 @@ def auth(transport: str, host: str, port: int, with_tls: bool, force: bool) -> N
     mcp_url = f"{scheme}://{host}:{port}/mcp/"
     sse_url = f"{scheme}://{host}:{port}/sse"
 
-    click.echo("\n─── Start the server ───")
+    _echo_section("Start the server")
     click.echo("  windows-mcp serve")
 
     if transport == "sse":
-        click.echo("\n─── Claude Desktop config (SSE) ───")
+        _echo_section("Claude Desktop config (SSE)")
         click.echo(
             f"""\
 {{
@@ -913,7 +935,7 @@ def auth(transport: str, host: str, port: int, with_tls: bool, force: bool) -> N
 }}"""
         )
     else:
-        click.echo("\n─── Claude Desktop config (Streamable HTTP) ───")
+        _echo_section("Claude Desktop config (Streamable HTTP)")
         click.echo(
             f"""\
 {{
