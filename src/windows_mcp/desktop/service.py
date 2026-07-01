@@ -8,8 +8,8 @@ from windows_mcp.vdm.core import (
     get_current_desktop,
     is_window_on_current_desktop,
 )
-from windows_mcp.desktop.views import DesktopState, Window, Browser, Status, Size
-from windows_mcp.tree.views import BoundingBox, TreeElementNode, TreeState
+from windows_mcp.desktop.views import DesktopState, Window, Browser, Status, Size, Display
+from windows_mcp.tree.views import BoundingBox, TreeElementNode, TreeState, SemanticNode
 from concurrent.futures import ThreadPoolExecutor
 from PIL import ImageFont, ImageDraw, Image
 from windows_mcp.tree.service import Tree
@@ -118,7 +118,11 @@ class Desktop:
         screenshot_capture_ms = 0.0
         screenshot_resize_ms = 0.0
         state_build_ms = 0.0
-        capture_rect = self.get_display_union_rect(display_indices) if display_indices else None
+        displays = self.get_displays()
+        available_displays = [self._display_to_view(display) for display in displays]
+        capture_rect = (
+            self.get_display_union_rect(display_indices, displays) if display_indices else None
+        )
         screenshot_region = self._rect_to_bounding_box(capture_rect) if capture_rect else None
 
         # Fast path for Screenshot tool (use_ui_tree=False): skip window enumeration.
@@ -159,9 +163,24 @@ class Desktop:
         logger.debug(f"Windows: {windows}")
 
         if use_ui_tree:
-            other_windows_handles = list(controls_handles - windows_handles)
+            other_windows_handles = set(controls_handles - windows_handles)
+            if active_window_handle is not None:
+                other_windows_handles.discard(active_window_handle)
+            tree_active_window_handle = active_window_handle
+            if screenshot_region:
+                active_window_in_region = (
+                    self._filter_window_to_region(active_window, screenshot_region) is not None
+                )
+                tree_active_window_handle = (
+                    active_window_handle if active_window_in_region else None
+                )
+                other_windows_handles.update(
+                    window.handle
+                    for window in windows
+                    if self._filter_window_to_region(window, screenshot_region) is not None
+                )
             tree_state = self.tree.get_state(
-                active_window_handle, other_windows_handles, use_dom=use_dom
+                tree_active_window_handle, list(other_windows_handles), use_dom=use_dom
             )
         else:
             root_box = screenshot_region or self.tree.screen_box
@@ -256,6 +275,7 @@ class Desktop:
             screenshot_scale=applied_scale,
             screenshot_region=screenshot_region,
             screenshot_displays=display_indices,
+            available_displays=available_displays,
             tree_state=tree_state,
             screenshot_backend=getattr(self, "_last_screenshot_backend", None)
             if use_vision
@@ -958,6 +978,17 @@ class Desktop:
         width, height = uia.GetVirtualScreenSize()
         return Size(width=width, height=height)
 
+    def get_screen_box(self) -> BoundingBox:
+        left, top, width, height = uia.GetVirtualScreenRect()
+        return BoundingBox(
+            left=left,
+            top=top,
+            right=left + width,
+            bottom=top + height,
+            width=width,
+            height=height,
+        )
+
     @staticmethod
     def parse_display_selection(
         display: int | list[int] | tuple[int, ...] | None,
@@ -967,7 +998,7 @@ class Desktop:
 
         if isinstance(display, bool):
             raise ValueError(
-                "display must be a JSON array of non-negative integers, for example [0] or [0,1]"
+                "display must be a JSON array of zero-based active display indices, for example [0] or [0,1]"
             )
 
         if isinstance(display, int):
@@ -976,37 +1007,56 @@ class Desktop:
             values = list(display)
         else:
             raise ValueError(
-                "display must be a JSON array of non-negative integers, for example [0] or [0,1]"
+                "display must be a JSON array of zero-based active display indices, for example [0] or [0,1]"
             )
 
         unique_values: list[int] = []
         for value in values:
             if not isinstance(value, int) or value < 0:
-                raise ValueError("display must contain only non-negative integers")
+                raise ValueError("display must contain only zero-based active display indices")
             if value not in unique_values:
                 unique_values.append(value)
         return unique_values or None
 
-    def get_display_union_rect(self, display_indices: list[int]) -> uia.Rect:
-        monitor_rects = uia.GetMonitorsRect()
-        if not monitor_rects:
+    @staticmethod
+    def get_displays() -> list[uia.DisplayInfo]:
+        return uia.GetDisplays()
+
+    @staticmethod
+    def _display_to_view(display: uia.DisplayInfo) -> Display:
+        return Display(
+            index=display.index,
+            device_name=display.device_name,
+            bounding_box=Desktop._rect_to_bounding_box(display.rect),
+            primary=display.primary,
+        )
+
+    def get_display_union_rect(
+        self,
+        display_indices: list[int],
+        displays: list[uia.DisplayInfo] | None = None,
+    ) -> uia.Rect:
+        displays = displays if displays is not None else self.get_displays()
+        if not displays:
             logger.warning(
                 "Monitor enumeration returned no monitors while display filter was requested"
             )
             raise ValueError("No displays detected")
 
-        invalid_indices = [index for index in display_indices if index >= len(monitor_rects)]
+        display_by_index = {display.index: display for display in displays}
+        invalid_indices = [index for index in display_indices if index not in display_by_index]
         if invalid_indices:
+            available_indices = ",".join(str(display.index) for display in displays)
             logger.warning(
-                "Invalid display selection %s. Available displays: 0-%s",
+                "Invalid display selection %s. Available displays: %s",
                 invalid_indices,
-                len(monitor_rects) - 1,
+                available_indices,
             )
             raise ValueError(
-                f"Invalid display index {invalid_indices[0]}. Available displays: 0-{len(monitor_rects) - 1}"
+                f"Invalid display index {invalid_indices[0]}. Available displays: {available_indices}"
             )
 
-        selected_rects = [monitor_rects[index] for index in display_indices]
+        selected_rects = [display_by_index[index].rect for index in display_indices]
         return uia.Rect(
             left=min(rect.left for rect in selected_rects),
             top=min(rect.top for rect in selected_rects),
@@ -1029,14 +1079,9 @@ class Desktop:
         capture_rect: uia.Rect | None = None,
     ) -> Image.Image:
         screenshot = self.get_screenshot(capture_rect=capture_rect)
-        # Add padding
-        padding = 5
-        width = int(screenshot.width + (1.5 * padding))
-        height = int(screenshot.height + (1.5 * padding))
-        padded_screenshot = Image.new("RGB", (width, height), color=(255, 255, 255))
-        padded_screenshot.paste(screenshot, (padding, padding))
-
-        draw = ImageDraw.Draw(padded_screenshot)
+        annotated_screenshot = screenshot.copy()
+        draw = ImageDraw.Draw(annotated_screenshot)
+        image_width, image_height = annotated_screenshot.size
         font_size = 12
         try:
             font = ImageFont.truetype("arial.ttf", font_size)
@@ -1046,6 +1091,23 @@ class Desktop:
         def get_random_color():
             return "#{:06x}".format(random.randint(0, 0xFFFFFF))
 
+        def clamp(value: float, minimum: float, maximum: float) -> float:
+            return max(minimum, min(value, maximum))
+
+        def get_label_size(text: str) -> tuple[int, int]:
+            text_box = draw.textbbox((0, 0), text, font=font)
+            return text_box[2] - text_box[0] + 4, text_box[3] - text_box[1] + 4
+
+        def draw_label(text: str, x: float, y: float, color: str) -> None:
+            label_width, label_height = get_label_size(text)
+            label_x = int(clamp(x, 0, max(0, image_width - label_width)))
+            label_y = int(clamp(y, 0, max(0, image_height - label_height)))
+            draw.rectangle(
+                [(label_x, label_y), (label_x + label_width, label_y + label_height)],
+                fill=color,
+            )
+            draw.text((label_x + 2, label_y + 2), text, fill=(255, 255, 255), font=font)
+
         if capture_rect:
             left_offset, top_offset = capture_rect.left, capture_rect.top
         else:
@@ -1054,59 +1116,40 @@ class Desktop:
         # Draw grid lines if requested
         if grid_lines:
             w_count, h_count = grid_lines
-            grid_left = padding
-            grid_top = padding
-            grid_width = screenshot.width
-            grid_height = screenshot.height
             for i in range(1, w_count):
-                x = grid_left + (grid_width * i // w_count)
-                draw.line(
-                    [(x, grid_top), (x, grid_top + grid_height)],
-                    fill=(200, 200, 200, 128),
-                    width=1,
-                )
+                x = image_width * i // w_count
+                draw.line([(x, 0), (x, image_height)], fill=(200, 200, 200, 128), width=1)
             for i in range(1, h_count):
-                y = grid_top + (grid_height * i // h_count)
-                draw.line(
-                    [(grid_left, y), (grid_left + grid_width, y)],
-                    fill=(200, 200, 200, 128),
-                    width=1,
-                )
+                y = image_height * i // h_count
+                draw.line([(0, y), (image_width, y)], fill=(200, 200, 200, 128), width=1)
 
         def draw_annotation(label, node: TreeElementNode):
             box = node.bounding_box
             color = get_random_color()
 
-            # Scale and pad the bounding box also clip the bounding box
-            # Adjust for virtual screen offset so coordinates map to the screenshot image
-            adjusted_box = (
-                int(box.left - left_offset) + padding,
-                int(box.top - top_offset) + padding,
-                int(box.right - left_offset) + padding,
-                int(box.bottom - top_offset) + padding,
+            adjusted_left = int(box.left - left_offset)
+            adjusted_top = int(box.top - top_offset)
+            adjusted_right = int(box.right - left_offset)
+            adjusted_bottom = int(box.bottom - top_offset)
+            clipped_box = (
+                int(clamp(adjusted_left, 0, image_width - 1)),
+                int(clamp(adjusted_top, 0, image_height - 1)),
+                int(clamp(adjusted_right, 0, image_width - 1)),
+                int(clamp(adjusted_bottom, 0, image_height - 1)),
             )
-            # Draw bounding box
-            draw.rectangle(adjusted_box, outline=color, width=2)
+            left, top, right, bottom = clipped_box
+            if right <= left or bottom <= top:
+                return
 
-            # Label dimensions
-            label_width = draw.textlength(str(label), font=font)
-            label_height = font_size
-            left, top, right, bottom = adjusted_box
+            draw.rectangle(clipped_box, outline=color, width=2)
 
-            # Label position above bounding box
-            label_x1 = right - label_width
-            label_y1 = top - label_height - 4
-            label_x2 = label_x1 + label_width
-            label_y2 = label_y1 + label_height + 4
-
-            # Draw label background and text
-            draw.rectangle([(label_x1, label_y1), (label_x2, label_y2)], fill=color)
-            draw.text(
-                (label_x1 + 2, label_y1 + 2),
-                str(label),
-                fill=(255, 255, 255),
-                font=font,
-            )
+            label_text = str(label)
+            label_width, label_height = get_label_size(label_text)
+            label_x = right - label_width
+            label_y = top - label_height - 2
+            if label_y < 0:
+                label_y = bottom + 2
+            draw_label(label_text, label_x, label_y, color)
 
         # Draw annotations in parallel
         with ThreadPoolExecutor() as executor:
@@ -1115,9 +1158,8 @@ class Desktop:
         # Draw cursor highlight if pos provided
         if cursor_pos:
             cx, cy = cursor_pos
-            # Adjust for virtual screen offset and padding
-            acx = int(cx - left_offset) + padding
-            acy = int(cy - top_offset) + padding
+            acx = int(cx - left_offset)
+            acy = int(cy - top_offset)
 
             # Draw a distinctive marker (e.g., a circle or crosshair with a box)
             r = 15
@@ -1127,18 +1169,9 @@ class Desktop:
 
             # Draw "Cursor" label
             c_label = "CURSOR"
-            c_label_width = draw.textlength(c_label, font=font)
-            draw.rectangle(
-                [acx + r, acy - r, acx + r + c_label_width + 4, acy - r + 16], fill="red"
-            )
-            draw.text((acx + r + 2, acy - r), c_label, fill="white", font=font)
+            draw_label(c_label, acx + r, acy - r, "red")
 
-        if capture_rect:
-            return padded_screenshot.crop(
-                (padding, padding, padding + screenshot.width, padding + screenshot.height)
-            )
-
-        return padded_screenshot
+        return annotated_screenshot
 
     @staticmethod
     def _rect_to_bounding_box(rect: uia.Rect | None) -> BoundingBox | None:
@@ -1231,6 +1264,41 @@ class Desktop:
             metadata=node.metadata,
         )
 
+    def _filter_semantic_node_to_region(
+        self,
+        node: SemanticNode | None,
+        region: BoundingBox,
+    ) -> SemanticNode | None:
+        if node is None:
+            return None
+
+        clipped_box = None
+        if node.bounding_box is not None:
+            clipped_box = self._clip_bounding_box_to_region(node.bounding_box, region)
+            if clipped_box is None:
+                return None
+
+        filtered_children = []
+        for child in node.children:
+            filtered_child = self._filter_semantic_node_to_region(child, region)
+            if filtered_child is not None:
+                filtered_children.append(filtered_child)
+
+        if node.element_type != "desktop" and clipped_box is None and not filtered_children:
+            return None
+
+        filtered_node = SemanticNode(
+            control_type=node.control_type,
+            element_type=node.element_type,
+            name=node.name,
+            window_name=node.window_name,
+            center=clipped_box.get_center() if clipped_box is not None else node.center,
+            bounding_box=clipped_box,
+            metadata=dict(node.metadata),
+        )
+        filtered_node.children = filtered_children
+        return filtered_node
+
     def _filter_tree_state_to_region(self, tree_state, region: BoundingBox):
         filtered_interactive_nodes = []
         for node in tree_state.interactive_nodes:
@@ -1248,6 +1316,14 @@ class Desktop:
         if tree_state.dom_node is not None:
             filtered_dom_node = self._filter_scroll_node_to_region(tree_state.dom_node, region)
 
+        filtered_semantic_root = self._filter_semantic_node_to_region(
+            tree_state.semantic_tree_root,
+            region,
+        )
+        if filtered_semantic_root is not None:
+            filtered_semantic_root.bounding_box = region
+            filtered_semantic_root.center = region.get_center()
+
         return tree_state.__class__(
             status=tree_state.status,
             root_node=TreeElementNode(
@@ -1263,4 +1339,5 @@ class Desktop:
             scrollable_nodes=filtered_scrollable_nodes,
             dom_informative_nodes=tree_state.dom_informative_nodes if filtered_dom_node else [],
             capture_sec=tree_state.capture_sec,
+            semantic_tree_root=filtered_semantic_root,
         )

@@ -55,6 +55,14 @@ class Size:
 
 
 @dataclass
+class Display:
+    index: int
+    device_name: str
+    bounding_box: BoundingBox
+    primary: bool
+
+
+@dataclass
 class DesktopState:
     active_desktop: dict
     all_desktops: list[dict]
@@ -66,6 +74,7 @@ class DesktopState:
     screenshot_scale: float | None = None
     screenshot_region: BoundingBox | None = None
     screenshot_displays: list[int] | None = None
+    available_displays: list[Display] | None = None
     screenshot_backend: str | None = None
     tree_state: TreeState | None = None
     capture_sec: float = 0.0

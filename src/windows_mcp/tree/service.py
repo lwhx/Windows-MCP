@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING,Optional,Any
 from time import sleep,perf_counter
 import logging
 import weakref
-import ctypes
 import os
 
 logger = logging.getLogger(__name__)
@@ -50,10 +49,7 @@ class Tree:
         self.dom:Optional[Control]=None
         self.dom_bounding_box:BoundingBox=None
         self.dom_is_ia2:bool=False
-        self.screen_box=BoundingBox(
-            top=0, left=0, bottom=self.screen_size.height, right=self.screen_size.width,
-            width=self.screen_size.width, height=self.screen_size.height
-        )
+        self.screen_box=desktop.get_screen_box()
         self.tree_state=None
 
 
@@ -593,17 +589,17 @@ class Tree:
                                         'metadata':metadata
                                     })
                                     interactive_nodes.append(tree_node)
-                                if current_semantic_node is not None:
-                                    current_semantic_node.add_child(SemanticNode(
-                                        control_type=tree_node.control_type,
-                                        element_type='interactive',
-                                        name=tree_node.name,
-                                        window_name=tree_node.window_name,
-                                        center=tree_node.center,
-                                        bounding_box=tree_node.bounding_box,
-                                        metadata=dict(tree_node.metadata),
-                                    ))
-                                    semantic_added = True
+                                    if current_semantic_node is not None:
+                                        current_semantic_node.add_child(SemanticNode(
+                                            control_type=tree_node.control_type,
+                                            element_type='interactive',
+                                            name=tree_node.name,
+                                            window_name=tree_node.window_name,
+                                            center=tree_node.center,
+                                            bounding_box=tree_node.bounding_box,
+                                            metadata=dict(tree_node.metadata),
+                                        ))
+                                        semantic_added = True
 
                     # Informative Check
                     if dom_informative_nodes is not None:

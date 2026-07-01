@@ -14,18 +14,16 @@ This means that the code can be freely copied and distributed, and costs nothing
 import os
 import sys
 import time
-import datetime
 import shlex
 import struct
-import atexit
 import threading
 import ctypes
 import ctypes.wintypes
+from dataclasses import dataclass
 import comtypes
 import comtypes.client
 from _ctypes import COMError
-from io import TextIOWrapper
-from typing import Any, Callable, Dict, Generator, List, Tuple, Union
+from typing import Any, Callable, Dict, Generator, List, Tuple
 
 
 METRO_WINDOW_CLASS_NAME = "Windows.UI.Core.CoreWindow"  # for Windows 8 and 8.1
@@ -45,8 +43,8 @@ ProcessTime = time.perf_counter  # this returns nearly 0 when first call it if p
 ProcessTime()  # need to call it once if python version <= 3.6
 TreeNode = Any
 from .enums import *  # noqa: E402
-from .enums import _INPUTUnion
-from .exceptions import from_com_error, UIAException  # noqa: E402
+from .enums import _INPUTUnion  # noqa: E402
+from .exceptions import from_com_error  # noqa: E402
 
 
 class _AutomationClient:
@@ -643,19 +641,78 @@ def GetVirtualScreenRect() -> Tuple[int, int, int, int]:
     )
 
 
-def GetMonitorsRect() -> List[Rect]:
+@dataclass(frozen=True)
+class DisplayInfo:
+    """Display identity and geometry from the Windows monitor APIs."""
+
+    index: int
+    device_name: str
+    rect: "Rect"
+    primary: bool
+
+
+class _MonitorInfoExW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.wintypes.DWORD),
+        ("rcMonitor", ctypes.wintypes.RECT),
+        ("rcWork", ctypes.wintypes.RECT),
+        ("dwFlags", ctypes.wintypes.DWORD),
+        ("szDevice", ctypes.wintypes.WCHAR * 32),
+    ]
+
+
+class _DisplayDeviceW(ctypes.Structure):
+    _fields_ = [
+        ("cb", ctypes.wintypes.DWORD),
+        ("DeviceName", ctypes.wintypes.WCHAR * 32),
+        ("DeviceString", ctypes.wintypes.WCHAR * 128),
+        ("StateFlags", ctypes.wintypes.DWORD),
+        ("DeviceID", ctypes.wintypes.WCHAR * 128),
+        ("DeviceKey", ctypes.wintypes.WCHAR * 128),
+    ]
+
+
+def _active_display_indices() -> Dict[str, int]:
+    DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x00000001
+    display_indices: dict[str, int] = {}
+    device_index = 0
+    while True:
+        device = _DisplayDeviceW()
+        device.cb = ctypes.sizeof(_DisplayDeviceW)
+        if not ctypes.windll.user32.EnumDisplayDevicesW(
+            None,
+            device_index,
+            ctypes.byref(device),
+            0,
+        ):
+            break
+        if device.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP:
+            display_indices[device.DeviceName.upper()] = len(display_indices)
+        device_index += 1
+    return display_indices
+
+
+def GetDisplays() -> List[DisplayInfo]:
     """
-    Get monitors' rect.
-    Return List[Rect].
+    Get active displays keyed by zero-based active display index.
+    Return List[DisplayInfo].
     """
     MonitorEnumProc = ctypes.WINFUNCTYPE(
         ctypes.c_int,
-        ctypes.c_size_t,
-        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
         ctypes.POINTER(ctypes.wintypes.RECT),
         ctypes.c_size_t,
     )
-    rects = []
+    displays: list[DisplayInfo] = []
+    display_indices = _active_display_indices()
+
+    def next_fallback_index() -> int:
+        used_indices = set(display_indices.values()) | {display.index for display in displays}
+        index = 0
+        while index in used_indices:
+            index += 1
+        return index
 
     def MonitorCallback(
         hMonitor: int,
@@ -663,19 +720,51 @@ def GetMonitorsRect() -> List[Rect]:
         lprcMonitor: ctypes.POINTER(ctypes.wintypes.RECT),
         dwData: int,
     ):
-        rect = Rect(
-            lprcMonitor.contents.left,
-            lprcMonitor.contents.top,
-            lprcMonitor.contents.right,
-            lprcMonitor.contents.bottom,
+        info = _MonitorInfoExW()
+        info.cbSize = ctypes.sizeof(_MonitorInfoExW)
+        if ctypes.windll.user32.GetMonitorInfoW(ctypes.c_void_p(hMonitor), ctypes.byref(info)):
+            rect = Rect(
+                info.rcMonitor.left,
+                info.rcMonitor.top,
+                info.rcMonitor.right,
+                info.rcMonitor.bottom,
+            )
+            device_name = info.szDevice
+            index = display_indices.get(device_name.upper(), next_fallback_index())
+            primary = bool(info.dwFlags & 1)
+        else:
+            rect = Rect(
+                lprcMonitor.contents.left,
+                lprcMonitor.contents.top,
+                lprcMonitor.contents.right,
+                lprcMonitor.contents.bottom,
+            )
+            index = next_fallback_index()
+            device_name = f"DISPLAY{index}"
+            primary = False
+
+        displays.append(
+            DisplayInfo(
+                index=index,
+                device_name=device_name,
+                rect=rect,
+                primary=primary,
+            )
         )
-        rects.append(rect)
         return 1
 
     ctypes.windll.user32.EnumDisplayMonitors(
         ctypes.c_void_p(0), ctypes.c_void_p(0), MonitorEnumProc(MonitorCallback), 0
     )
-    return rects
+    return sorted(displays, key=lambda display: display.index)
+
+
+def GetMonitorsRect() -> List[Rect]:
+    """
+    Get monitors' rect.
+    Return List[Rect].
+    """
+    return [display.rect for display in GetDisplays()]
 
 
 def GetPixelColor(x: int, y: int, handle: int = 0) -> int:
@@ -2092,6 +2181,8 @@ class ExtendedProperty(ctypes.Structure):
         ("PropertyName", ctypes.c_wchar_p),
         ("PropertyValue", ctypes.c_wchar_p),
     ]
+
+
 class UIAutomationEventInfo(ctypes.Structure):
     _fields_ = [
         ("guid", ctypes.c_void_p),

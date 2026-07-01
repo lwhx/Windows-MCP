@@ -25,7 +25,6 @@ _DURATION_MS = 3500
 _FRAME_INTERVAL_MS = 30
 _GLOW_BORDER_THICKNESS = 8
 _GLOW_BLUR_RADIUS = 14
-_GLOW_MARGIN = _GLOW_BLUR_RADIUS * 3
 _FULLSCREEN_INSET = 6
 _MIN_VISIBLE_INTENSITY = 0.04
 _INTENSITY_QUANT = 32
@@ -491,11 +490,6 @@ def _run_overlay(
         union_top = min(r[1] for r in rects)
         union_right = max(r[2] for r in rects)
         union_bottom = max(r[3] for r in rects)
-        if not full_screen:
-            union_left -= _GLOW_MARGIN
-            union_top -= _GLOW_MARGIN
-            union_right += _GLOW_MARGIN
-            union_bottom += _GLOW_MARGIN
         width = union_right - union_left
         height = union_bottom - union_top
         if width <= 0 or height <= 0:
@@ -525,7 +519,7 @@ def _run_overlay(
             _SWP_NOSIZE | _SWP_NOMOVE | _SWP_NOACTIVATE | _SWP_SHOWWINDOW,
         )
 
-        glow_rgba = _render_glow_rgba(width, height, local_rects, outward=not full_screen)
+        glow_rgba = _render_glow_rgba(width, height, local_rects, outward=False)
 
         logger.info(
             "screenshot flash overlay started: %dx%d layered window at (%d,%d) for %d rect(s)",

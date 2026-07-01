@@ -103,6 +103,40 @@ class TestShowCaptureFlash:
         assert full_screen_arg is False
         assert overlay_arg is flash_overlay._active_overlay
 
+    def test_region_overlay_window_uses_capture_rect_without_expanding(self, monkeypatch):
+        calls = {}
+        monkeypatch.setattr(
+            flash_overlay,
+            "_create_layered_window",
+            lambda class_name, x, y, width, height: (
+                calls.setdefault("window", (class_name, x, y, width, height)) and (1, 2)
+            ),
+        )
+        monkeypatch.setattr(flash_overlay._user32, "ShowWindow", lambda *args: None)
+        monkeypatch.setattr(flash_overlay._user32, "SetWindowPos", lambda *args: None)
+        monkeypatch.setattr(
+            flash_overlay,
+            "_render_glow_rgba",
+            lambda width, height, rects, *, outward: calls.setdefault(
+                "glow", (width, height, rects, outward)
+            ),
+        )
+        monkeypatch.setattr(flash_overlay, "_premultiplied_bgra", lambda image, intensity: b"")
+        monkeypatch.setattr(
+            flash_overlay, "_push_bitmap", lambda *args: calls.setdefault("pushed", args)
+        )
+        monkeypatch.setattr(flash_overlay, "_pump_messages", lambda hwnd: None)
+        monkeypatch.setattr(flash_overlay._user32, "DestroyWindow", lambda hwnd: None)
+        monkeypatch.setattr(flash_overlay._user32, "UnregisterClassW", lambda *args: None)
+        monkeypatch.setattr(flash_overlay.time, "perf_counter", iter([0.0, 1.0, 4.0]).__next__)
+
+        overlay = flash_overlay._Overlay()
+        flash_overlay._run_overlay([(-2560, 0, 0, 1440)], False, overlay)
+
+        assert calls["window"][1:] == (-2560, 0, 2560, 1440)
+        assert calls["glow"] == (2560, 1440, [(0, 0, 2560, 1440)], False)
+        assert overlay.closed_event.is_set()
+
     def test_full_screen_capture_enumerates_monitors(self, monkeypatch):
         """When capture_rect is None the helper must read uia.GetMonitorsRect."""
         monkeypatch.delenv("WINDOWS_MCP_DISABLE_FLASH", raising=False)
@@ -217,9 +251,9 @@ class TestPremultipliedBgra:
 
 
 class TestRunOverlayFallthrough:
-    def test_missing_tkinter_sets_closed_event(self, monkeypatch):
-        # Force ``import tkinter`` inside _run_overlay to fail
-        monkeypatch.setitem(sys.modules, "tkinter", None)
+    def test_missing_pillow_sets_closed_event(self, monkeypatch):
+        # Force ``from PIL import Image`` inside _run_overlay to fail before Win32 window creation.
+        monkeypatch.setitem(sys.modules, "PIL", None)
         overlay = flash_overlay._Overlay()
         flash_overlay._run_overlay([(0, 0, 100, 100)], False, overlay)
         assert overlay.closed_event.is_set()

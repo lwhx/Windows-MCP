@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 import pytest
 from windows_mcp.desktop.views import Size
 from windows_mcp.tree.service import Tree, _is_comtypes_variant_ord_typeerror
+from windows_mcp.tree.views import BoundingBox, SemanticNode
 from windows_mcp.uia import Rect
 
 
@@ -9,7 +10,19 @@ from windows_mcp.uia import Rect
 def tree_instance():
     mock_desktop = MagicMock()
     mock_desktop.get_screen_size.return_value = Size(width=1920, height=1080)
+    mock_desktop.get_screen_box.return_value = make_box(0, 0, 1920, 1080)
     return Tree(mock_desktop)
+
+
+def make_box(left: int, top: int, right: int, bottom: int):
+    return BoundingBox(
+        left=left,
+        top=top,
+        right=right,
+        bottom=bottom,
+        width=right - left,
+        height=bottom - top,
+    )
 
 
 class TestAppNameCorrection:
@@ -75,6 +88,22 @@ class TestIouBoundingBox:
         assert result.width == 20
         assert result.height == 20
 
+    def test_screen_box_keeps_virtual_screen_origin(self):
+        mock_desktop = MagicMock()
+        mock_desktop.get_screen_size.return_value = Size(width=3840, height=1080)
+        mock_desktop.get_screen_box.return_value = make_box(-1920, 0, 1920, 1080)
+
+        tree = Tree(mock_desktop)
+        result = tree.iou_bounding_box(
+            Rect(-1920, 0, 0, 1080),
+            Rect(-100, 100, 100, 200),
+        )
+
+        assert result.left == -100
+        assert result.top == 100
+        assert result.right == 0
+        assert result.bottom == 200
+
 
 def _type_error_from(filename: str) -> TypeError:
     namespace = {}
@@ -101,3 +130,53 @@ class TestComtypesVariantOrdTypeError:
         )
 
         assert _is_comtypes_variant_ord_typeerror(error) is False
+
+
+class TestTreeTraversal:
+    def test_unnamed_interactive_control_does_not_add_semantic_child(
+        self, tree_instance, monkeypatch
+    ):
+        child = MagicMock()
+        child.CachedIsOffscreen = False
+        child.CachedControlTypeName = "ButtonControl"
+        child.CachedIsControlElement = True
+        child.CachedBoundingRectangle = Rect(10, 10, 110, 60)
+        child.CachedIsEnabled = True
+        child.CachedHasKeyboardFocus = False
+        child.CachedName = "   "
+        child.CachedLocalizedControlType = "button"
+        child.CachedAcceleratorKey = ""
+        child.GetCachedPropertyValue.return_value = 43
+
+        semantic_root = SemanticNode(
+            control_type="Window",
+            element_type="window",
+            name="Window",
+            window_name="Window",
+        )
+
+        monkeypatch.setattr(
+            "windows_mcp.tree.service.CachedControlHelper.get_cached_children",
+            lambda node, cache_request: [],
+        )
+        monkeypatch.setattr(
+            "windows_mcp.tree.service.random_point_within_bounding_box",
+            lambda node, scale_factor: (60, 35),
+        )
+        monkeypatch.setattr("windows_mcp.tree.service.AccessibleRoleNames", {43: "PushButton"})
+
+        interactive_nodes = []
+        tree_instance.tree_traversal(
+            child,
+            Rect(0, 0, 200, 200),
+            "Window",
+            False,
+            interactive_nodes,
+            [],
+            [],
+            [],
+            current_semantic_node=semantic_root,
+        )
+
+        assert interactive_nodes == []
+        assert semantic_root.children == []
