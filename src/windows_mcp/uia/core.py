@@ -11,6 +11,7 @@ uiautomation is shared under the Apache Licene 2.0.
 This means that the code can be freely copied and distributed, and costs nothing to use.
 """
 
+import math
 import os
 import sys
 import time
@@ -488,15 +489,14 @@ def MoveToDuration(x: int, y: int, duration: float, waitTime: float = OPERATION_
         time.sleep(waitTime)
         return
 
-    stepCount = max(1, min(200, int(duration / 0.01)))
+    stepCount = max(2, min(200, math.ceil(duration / 0.01)))
     interval = duration / stepCount
-    for i in range(1, stepCount):
+    for i in range(1, stepCount + 1):
         ratio = i / stepCount
         cx = curX + round((x - curX) * ratio)
         cy = curY + round((y - curY) * ratio)
         SetCursorPos(cx, cy)
         time.sleep(interval)
-    SetCursorPos(x, y)
     time.sleep(waitTime)
 
 

@@ -786,24 +786,31 @@ class Desktop:
             raise ValueError("duration must be between 0 and 10 seconds")
         return effective_duration
 
+    @staticmethod
+    def _normalize_drag_point(value: object, name: str) -> tuple[int, int]:
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise ValueError(f"{name} must be a list or tuple of exactly 2 integers [x, y]")
+        x, y = value
+        if any(isinstance(item, bool) or not isinstance(item, int) for item in (x, y)):
+            raise ValueError(f"{name} must contain exactly 2 integers")
+        return x, y
+
     def drag(
         self,
         loc: tuple[int, int] | list[int],
         from_loc: tuple[int, int] | list[int] | None = None,
         duration: float | int | str | None = None,
     ) -> dict[str, object]:
-        if isinstance(loc, list):
-            x, y = loc[0], loc[1]
-        else:
-            x, y = loc
+        x, y = self._normalize_drag_point(loc, "loc")
+        normalized_from_loc = (
+            None if from_loc is None else self._normalize_drag_point(from_loc, "from_loc")
+        )
         effective_duration = self._normalize_drag_duration(duration)
         sleep(0.5)
-        if from_loc is None:
+        if normalized_from_loc is None:
             cx, cy = uia.GetCursorPos()
-        elif isinstance(from_loc, list):
-            cx, cy = from_loc[0], from_loc[1]
         else:
-            cx, cy = from_loc
+            cx, cy = normalized_from_loc
         uia.DragDrop(cx, cy, x, y, moveSpeed=1, duration=effective_duration)
         return {
             "start": [cx, cy],

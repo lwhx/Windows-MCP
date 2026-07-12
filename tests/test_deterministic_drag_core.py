@@ -83,6 +83,23 @@ def test_move_to_duration_emits_intermediate_and_final_positions(
     assert positions[-1] == (30, 0)
 
 
+def test_move_to_duration_honors_short_positive_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    positions: list[tuple[int, int]] = []
+    sleeps: list[float] = []
+
+    monkeypatch.setattr(core, "GetCursorPos", lambda: (0, 0))
+    monkeypatch.setattr(core, "SetCursorPos", lambda x, y: positions.append((x, y)))
+    monkeypatch.setattr(core.time, "sleep", sleeps.append)
+
+    core.MoveToDuration(10, 0, duration=0.005, waitTime=0.03)
+
+    assert positions == [(5, 0), (10, 0)]
+    assert sum(sleeps[:-1]) == pytest.approx(0.005)
+    assert sleeps[-1] == 0.03
+
+
 def test_move_to_duration_zero_duration_sets_final_position(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

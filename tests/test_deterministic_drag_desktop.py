@@ -82,3 +82,42 @@ def test_desktop_drag_rejects_boolean_duration_before_input(
 
     with pytest.raises(ValueError, match="finite"):
         desktop.drag([1, 2], from_loc=[3, 4], duration=duration)
+
+
+@pytest.mark.parametrize(
+    ("argument", "value"),
+    [
+        ("loc", [1]),
+        ("loc", [1, True]),
+        ("loc", [1, 2.0]),
+        ("loc", [1, "2"]),
+        ("from_loc", (3,)),
+        ("from_loc", (3, False)),
+        ("from_loc", (3.0, 4)),
+        ("from_loc", ("3", 4)),
+    ],
+)
+def test_desktop_drag_rejects_invalid_points_before_waiting_or_input(
+    argument: str,
+    value: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    desktop = _desktop()
+    monkeypatch.setattr(
+        service,
+        "sleep",
+        lambda seconds: pytest.fail("point must be rejected before waiting"),
+    )
+    monkeypatch.setattr(
+        service.uia,
+        "DragDrop",
+        lambda *args, **kwargs: pytest.fail("point must be rejected before input"),
+    )
+    kwargs: dict[str, object] = {
+        "loc": [1, 2],
+        "from_loc": [3, 4],
+        argument: value,
+    }
+
+    with pytest.raises(ValueError, match=argument):
+        desktop.drag(**kwargs)
