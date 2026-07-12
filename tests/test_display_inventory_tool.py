@@ -1,5 +1,4 @@
 import asyncio
-import json
 from types import SimpleNamespace
 from collections.abc import Callable
 
@@ -41,38 +40,35 @@ def test_display_inventory_returns_display_dpi_metadata() -> None:
     mcp = FakeMCP()
     display_tool_module.register(mcp, get_desktop=FakeDesktop, get_analytics=lambda: None)
 
-    result = json.loads(asyncio.run(mcp.tools["DisplayInventory"]()))
+    result = asyncio.run(mcp.tools["DisplayInventory"]())
 
-    assert result == {
-        "displays": [
-            {
-                "index": 0,
-                "device": "\\\\.\\DISPLAY1",
-                "primary": True,
-                "bounds": {
-                    "left": 0,
-                    "top": 0,
-                    "right": 1920,
-                    "bottom": 1080,
-                    "width": 1920,
-                    "height": 1080,
-                },
-                "work_area": {
-                    "left": 0,
-                    "top": 0,
-                    "right": 1920,
-                    "bottom": 1040,
-                    "width": 1920,
-                    "height": 1040,
-                },
-                "resolution": "1920x1080",
-                "orientation": "landscape",
-                "effective_dpi": 144,
-                "scale": 1.5,
-            }
-        ],
-        "count": 1,
-    }
+    assert result == [
+        {
+            "index": 0,
+            "device": "\\\\.\\DISPLAY1",
+            "primary": True,
+            "bounds": {
+                "left": 0,
+                "top": 0,
+                "right": 1920,
+                "bottom": 1080,
+                "width": 1920,
+                "height": 1080,
+            },
+            "work_area": {
+                "left": 0,
+                "top": 0,
+                "right": 1920,
+                "bottom": 1040,
+                "width": 1920,
+                "height": 1040,
+            },
+            "resolution": "1920x1080",
+            "orientation": "landscape",
+            "effective_dpi": 144,
+            "scale": 1.5,
+        }
+    ]
 
 
 def test_monitor_dpi_falls_back_to_system_dpi(monkeypatch: pytest.MonkeyPatch) -> None:

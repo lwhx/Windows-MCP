@@ -1,6 +1,5 @@
 """DisplayInventory tool - read-only display and DPI metadata."""
 
-import json
 from collections.abc import Callable
 from typing import Any
 
@@ -44,23 +43,19 @@ def register(
         ),
     )
     @with_analytics(get_analytics(), "DisplayInventory-Tool")
-    def display_inventory_tool(ctx: Context = None) -> str:
+    def display_inventory_tool(ctx: Context = None) -> list[dict[str, object]]:
         displays = get_desktop().get_displays()
-        payload = {
-            "displays": [
-                {
-                    "index": display.index,
-                    "device": display.device_name,
-                    "primary": display.primary,
-                    "bounds": _rect_to_dict(display.rect),
-                    "work_area": _rect_to_dict(getattr(display, "work_rect", None)),
-                    "resolution": f"{display.rect.width()}x{display.rect.height()}",
-                    "orientation": getattr(display, "orientation", None),
-                    "effective_dpi": getattr(display, "effective_dpi", None),
-                    "scale": getattr(display, "scale", None),
-                }
-                for display in displays
-            ],
-            "count": len(displays),
-        }
-        return json.dumps(payload, indent=2)
+        return [
+            {
+                "index": display.index,
+                "device": display.device_name,
+                "primary": display.primary,
+                "bounds": _rect_to_dict(display.rect),
+                "work_area": _rect_to_dict(getattr(display, "work_rect", None)),
+                "resolution": f"{display.rect.width()}x{display.rect.height()}",
+                "orientation": getattr(display, "orientation", None),
+                "effective_dpi": getattr(display, "effective_dpi", None),
+                "scale": getattr(display, "scale", None),
+            }
+            for display in displays
+        ]

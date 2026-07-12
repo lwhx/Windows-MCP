@@ -708,12 +708,12 @@ def _dpi_metadata(dpi: int | None) -> tuple[int | None, float | None]:
     return dpi, round(dpi / 96, 6)
 
 
-def _get_monitor_effective_dpi(hMonitor: int) -> tuple[int | None, float | None]:
+def _get_monitor_effective_dpi(h_monitor: int) -> tuple[int | None, float | None]:
     try:
         dpi_x = ctypes.c_uint()
         dpi_y = ctypes.c_uint()
         result = ctypes.windll.shcore.GetDpiForMonitor(
-            ctypes.c_void_p(hMonitor),
+            ctypes.c_void_p(h_monitor),
             0,
             ctypes.byref(dpi_x),
             ctypes.byref(dpi_y),
