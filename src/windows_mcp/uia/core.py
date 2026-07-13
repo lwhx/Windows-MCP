@@ -683,6 +683,10 @@ class DisplayInfo:
     device_name: str
     rect: "Rect"
     primary: bool
+    work_rect: "Rect | None" = None
+    effective_dpi: int | None = None
+    scale: float | None = None
+    orientation: str | None = None
 
 
 class _MonitorInfoExW(ctypes.Structure):
@@ -704,6 +708,78 @@ class _DisplayDeviceW(ctypes.Structure):
         ("DeviceID", ctypes.wintypes.WCHAR * 128),
         ("DeviceKey", ctypes.wintypes.WCHAR * 128),
     ]
+
+
+def _get_system_dpi() -> int | None:
+    try:
+        dpi = int(ctypes.windll.user32.GetDpiForSystem())
+        if dpi > 0:
+            return dpi
+    except Exception:
+        pass
+
+    hdc = None
+    try:
+        hdc = ctypes.windll.user32.GetDC(0)
+        if hdc:
+            dpi = int(ctypes.windll.gdi32.GetDeviceCaps(hdc, 88))  # LOGPIXELSX
+            if dpi > 0:
+                return dpi
+    except Exception:
+        pass
+    finally:
+        if hdc:
+            try:
+                ctypes.windll.user32.ReleaseDC(0, hdc)
+            except Exception:
+                pass
+    return None
+
+
+def _dpi_metadata(dpi: int | None) -> tuple[int | None, float | None]:
+    if dpi is None:
+        return None, None
+    return dpi, round(dpi / 96, 6)
+
+
+def _get_monitor_effective_dpi(h_monitor: int) -> tuple[int | None, float | None]:
+    try:
+        dpi_x = ctypes.c_uint()
+        dpi_y = ctypes.c_uint()
+        result = ctypes.windll.shcore.GetDpiForMonitor(
+            ctypes.c_void_p(h_monitor),
+            0,
+            ctypes.byref(dpi_x),
+            ctypes.byref(dpi_y),
+        )
+        if result == 0 and dpi_x.value > 0:
+            return _dpi_metadata(int(dpi_x.value))
+    except Exception:
+        pass
+    return _dpi_metadata(_get_system_dpi())
+
+
+def _get_display_orientation(device_name: str, rect: "Rect") -> str:
+    dev_mode_size = 220
+    dm_size_offset = 68
+    dm_pels_width_offset = 172
+    dm_pels_height_offset = 176
+    dev_mode = bytearray(dev_mode_size)
+    dev_mode[dm_size_offset : dm_size_offset + 2] = struct.pack("<H", dev_mode_size)
+    c_dev_mode = (ctypes.c_byte * dev_mode_size).from_buffer(dev_mode)
+    try:
+        if ctypes.windll.user32.EnumDisplaySettingsW(
+            device_name,
+            ctypes.wintypes.DWORD(-1),
+            c_dev_mode,
+        ):
+            width = struct.unpack_from("<I", dev_mode, dm_pels_width_offset)[0]
+            height = struct.unpack_from("<I", dev_mode, dm_pels_height_offset)[0]
+            if width > 0 and height > 0:
+                return "landscape" if width >= height else "portrait"
+    except Exception:
+        pass
+    return "landscape" if rect.width() >= rect.height() else "portrait"
 
 
 def _active_display_indices() -> Dict[str, int]:
@@ -763,6 +839,12 @@ def GetDisplays() -> List[DisplayInfo]:
                 info.rcMonitor.right,
                 info.rcMonitor.bottom,
             )
+            work_rect = Rect(
+                info.rcWork.left,
+                info.rcWork.top,
+                info.rcWork.right,
+                info.rcWork.bottom,
+            )
             device_name = info.szDevice
             index = display_indices.get(device_name.upper(), next_fallback_index())
             primary = bool(info.dwFlags & 1)
@@ -773,9 +855,12 @@ def GetDisplays() -> List[DisplayInfo]:
                 lprcMonitor.contents.right,
                 lprcMonitor.contents.bottom,
             )
+            work_rect = None
             index = next_fallback_index()
             device_name = f"DISPLAY{index}"
             primary = False
+        effective_dpi, scale = _get_monitor_effective_dpi(hMonitor)
+        orientation = _get_display_orientation(device_name, rect)
 
         displays.append(
             DisplayInfo(
@@ -783,6 +868,10 @@ def GetDisplays() -> List[DisplayInfo]:
                 device_name=device_name,
                 rect=rect,
                 primary=primary,
+                work_rect=work_rect,
+                effective_dpi=effective_dpi,
+                scale=scale,
+                orientation=orientation,
             )
         )
         return 1
