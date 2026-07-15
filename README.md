@@ -661,6 +661,12 @@ All variables are optional unless noted. Set them via the `env` key in `claude_d
 |---|---|---|
 | `WINDOWS_MCP_DEBUG` | `false` | Set to `1`, `true`, `yes`, or `on` to enable debug mode, which sets the log level to DEBUG for verbose output. Also available as the `--debug` CLI flag. |
 
+### WatchDog
+
+| Variable | Default | Description |
+|---|---|---|
+| `WINDOWS_MCP_WATCHDOG` | `true` | Set to `off`, `0`, `false`, `no`, or `disabled` (case-insensitive) to disable the UIA focus watchdog that keeps the accessibility tree current. On unstable UIA environments the watchdog can degrade after long uptime (e.g. across a sleep/resume or session change); disabling it trades away automatic focus tracking for stability — the accessibility tree still refreshes on-demand for tool calls. |
+
 **Example `claude_desktop_config.json`:**
 
 Local (no security):
