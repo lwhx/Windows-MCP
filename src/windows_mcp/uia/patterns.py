@@ -1412,7 +1412,7 @@ class TextRange:
                     or a positive value if the caller's endpoint occurs later in the text than the target endpoint.
         Refer https://docs.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtextrange-compareendpoints
         """
-        return self.textRange.CompareEndpoints(srcEndPoint, textRange, targetEndPoint)
+        return self.textRange.CompareEndpoints(srcEndPoint, textRange.textRange, targetEndPoint)
 
     def ExpandToEnclosingUnit(self, unit: int, waitTime: float = OPERATION_WAIT_TIME) -> bool:
         """

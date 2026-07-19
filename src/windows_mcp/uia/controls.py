@@ -924,6 +924,78 @@ class Control:
         """
         return self.Element.GetCurrentPropertyValue(propertyId)
 
+    def GetWordBoundingBox(
+        self, word: str, backward: bool = False, ignoreCase: bool = True
+    ) -> List[Rect] | None:
+        """
+        Find `word` in the control's text (via `TextPattern`) and return its bounding box(es).
+        word: str, the word/substring to search for.
+        backward: bool, search from the end of the document backward.
+        ignoreCase: bool, case-insensitive search.
+        Return List[Rect] or None if the control has no `TextPattern` or the word wasn't found.
+            Usually a single `Rect`; more than one if the match wraps across lines.
+        """
+        textPattern = self.GetPattern(PatternId.TextPattern)
+        if textPattern is None:
+            return None
+        wordRange = textPattern.DocumentRange.FindText(word, backward, ignoreCase)
+        if wordRange is None:
+            return None
+        return wordRange.GetBoundingRectangles()
+
+    def GetWordBoundingBoxAtPoint(self, x: int, y: int) -> List[Rect] | None:
+        """
+        Return the bounding box of the word at screen point (x, y), via `TextPattern`.
+        Return List[Rect] or None if the control has no `TextPattern` or there is no text at the point.
+        """
+        textPattern = self.GetPattern(PatternId.TextPattern)
+        if textPattern is None:
+            return None
+        pointRange = textPattern.RangeFromPoint(x, y)
+        if pointRange is None:
+            return None
+        pointRange.ExpandToEnclosingUnit(TextUnit.Word)
+        return pointRange.GetBoundingRectangles()
+
+    def GetWordFontSize(self, word: str, backward: bool = False, ignoreCase: bool = True) -> float | None:
+        """
+        Find `word` in the control's text (via `TextPattern`) and return its font size in points.
+        Return float or None if the control has no `TextPattern`, the word wasn't found,
+            or the attribute is mixed/unsupported (IUIAutomationTextRange::GetAttributeValue
+            returns UiaGetReservedMixedAttributeValue in that case).
+        """
+        textPattern = self.GetPattern(PatternId.TextPattern)
+        if textPattern is None:
+            return None
+        wordRange = textPattern.DocumentRange.FindText(word, backward, ignoreCase)
+        if wordRange is None:
+            return None
+        value = wordRange.GetAttributeValue(TextAttributeId.FontSizeAttribute)
+        return float(value) if isinstance(value, (int, float)) else None
+
+    def GetAllWordBoundingBoxes(self) -> List[Rect] | None:
+        """
+        Return the bounding box of every word in the control's visible text (via `TextPattern`).
+        Return List[Rect] or None if the control has no `TextPattern`.
+            Walks each visible range word-by-word using `TextRange.Move(TextUnit.Word, 1)`.
+        """
+        textPattern = self.GetPattern(PatternId.TextPattern)
+        if textPattern is None:
+            return None
+        rects: List[Rect] = []
+        for visibleRange in textPattern.GetVisibleRanges():
+            wordRange = visibleRange.Clone()
+            wordRange.ExpandToEnclosingUnit(TextUnit.Word)
+            while wordRange.CompareEndpoints(
+                TextPatternRangeEndpoint.Start, visibleRange, TextPatternRangeEndpoint.End
+            ) < 0:
+                if wordRange.GetText(-1).strip():
+                    rects.extend(wordRange.GetBoundingRectangles())
+                moved = wordRange.Move(TextUnit.Word, 1)
+                if moved == 0:
+                    break
+        return rects
+
     def GetPropertyValueEx(self, propertyId: int, ignoreDefaultValue: int) -> Any:
         """
         Call IUIAutomationElement::GetCurrentPropertyValueEx.
